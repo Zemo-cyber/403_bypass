@@ -7,7 +7,7 @@ This repository contains a Python-based tool designed for security researchers a
 1. Ensure you have Python 3 installed on your system.
 2. Clone the repository using the following command:
 
-   https://github.com/Zemo-cyber/403_bypass.git
+   git clone https://github.com/Zemo-cyber/403_bypass.git
    
 To display the usage information, execute the following command:
 
