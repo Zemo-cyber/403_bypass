@@ -13,4 +13,3 @@ To display the usage information, execute the following command:
 
 python3 403_bypass.py -h
 
-![Bypass Tool Screenshot](https://raw.githubusercontent.com/Zemo-cyber/403_bypass/refs/heads/main/403.png)
